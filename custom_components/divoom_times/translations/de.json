@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Bei Divoom anmelden",
-        "description": "Anmeldung mit dem Divoom-Konto, um die Geräteliste zu holen. Pro Gerät wählt die Integration danach den schnellsten Transport (lokal falls das Gerät es unterstützt, sonst Cloud-Relay).",
+        "description": "Einmalige Anmeldung, um den LocalToken für jedes Gerät zu holen. Nur UserId, Cloud-Token und der LocalToken pro Gerät werden gespeichert — nicht das Passwort. Danach läuft alles lokal im LAN.",
         "data": {
           "email": "E-Mail",
           "password": "Passwort"
@@ -16,16 +16,9 @@
           "device_id": "Gerät"
         }
       },
-      "local_token": {
-        "title": "LocalToken für {name}",
-        "description": "Times Gate zeigt einen LocalToken im eigenen Einstellungsmenü — eine Zahl wie z.B. 229930. Hier eintragen, um direkt lokal im LAN zu sprechen. Leer lassen für Cloud-Relay-Fallback (funktioniert auch, ist nur langsamer und braucht Internet).",
-        "data": {
-          "local_token": "LocalToken"
-        }
-      },
       "reauth_confirm": {
         "title": "Erneut anmelden",
-        "description": "Der gespeicherte Divoom-Token wurde abgelehnt. Zugangsdaten erneut eingeben.",
+        "description": "Der gespeicherte LocalToken wurde abgelehnt — das Gerät wurde vermutlich neu gekoppelt. Zugangsdaten erneut eingeben, ich hole den Token neu.",
         "data": {
           "email": "E-Mail",
           "password": "Passwort"
@@ -36,9 +29,7 @@
       "invalid_auth": "E-Mail oder Passwort falsch.",
       "cannot_connect": "Divoom-Cloud nicht erreichbar.",
       "no_devices_found": "Keine Divoom-Geräte in diesem Konto gefunden.",
-      "unknown_device": "Gewähltes Gerät nicht mehr verfügbar.",
-      "invalid_token": "LocalToken muss eine Zahl sein.",
-      "local_token_rejected": "Gerät hat den LocalToken abgelehnt. Wert im Times-Gate-Einstellungsmenü prüfen.",
+      "unknown_device": "Gerät nicht mehr im Konto.",
       "unknown": "Unerwarteter Fehler."
     },
     "abort": {

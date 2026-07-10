@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Sign in to Divoom",
-        "description": "Sign in with your Divoom account to enumerate your devices. For each device the integration then picks the fastest working transport (local if the device supports it, otherwise cloud-relay).",
+        "description": "One-time sign-in to fetch the LocalToken for each of your devices. Only the resulting UserId, cloud Token, and per-device LocalToken are stored — not your password. After setup, all commands stay on your LAN.",
         "data": {
           "email": "Email",
           "password": "Password"
@@ -16,16 +16,9 @@
           "device_id": "Device"
         }
       },
-      "local_token": {
-        "title": "LocalToken for {name}",
-        "description": "Times Gate exposes a LocalToken in its own settings menu — a number like 229930. Enter it here to talk to the device directly on your LAN. Leave blank to fall back to cloud-relay (works too, just a bit slower and needs internet).",
-        "data": {
-          "local_token": "LocalToken"
-        }
-      },
       "reauth_confirm": {
         "title": "Sign in again",
-        "description": "The stored Divoom token was rejected. Re-enter your account credentials.",
+        "description": "The stored LocalToken was rejected — the device was probably re-paired. Re-enter your Divoom credentials and I'll refresh the token.",
         "data": {
           "email": "Email",
           "password": "Password"
@@ -36,9 +29,7 @@
       "invalid_auth": "Invalid email or password.",
       "cannot_connect": "Could not reach the Divoom cloud.",
       "no_devices_found": "No Divoom devices found on this account.",
-      "unknown_device": "Selected device is no longer available.",
-      "invalid_token": "LocalToken must be a number.",
-      "local_token_rejected": "Device rejected the LocalToken. Double-check the value in the Times Gate settings menu.",
+      "unknown_device": "That device is no longer on the account.",
       "unknown": "Unexpected error."
     },
     "abort": {
