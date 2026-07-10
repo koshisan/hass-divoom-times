@@ -1,0 +1,51 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "menu_options": {
+          "discover": "Discover on my LAN",
+          "manual": "Enter IP and DeviceToken manually",
+          "cloud": "Sign in with Divoom account"
+        }
+      },
+      "discover": {
+        "title": "Divoom LAN devices",
+        "description": "Devices bound to the same public IP as your Home Assistant instance.",
+        "data": {
+          "device_id": "Device"
+        }
+      },
+      "manual": {
+        "title": "Manual setup",
+        "data": {
+          "host": "IP address",
+          "port": "Port",
+          "device_id": "Device ID",
+          "device_token": "DeviceToken",
+          "device_name": "Name"
+        }
+      },
+      "cloud": {
+        "title": "Divoom cloud sign-in",
+        "description": "Used only to fetch the per-device DeviceToken. Credentials are not stored.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "token": {
+        "title": "Enter DeviceToken",
+        "description": "Set up {name} at {ip}. Paste the DeviceToken from the Divoom app or a traffic capture."
+      }
+    },
+    "error": {
+      "discovery_failed": "Cloud LAN discovery failed. Try manual setup.",
+      "no_devices_found": "No Divoom devices found on this LAN.",
+      "auth_failed": "DeviceToken rejected by the device.",
+      "login_failed": "Divoom account login failed."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  }
+}

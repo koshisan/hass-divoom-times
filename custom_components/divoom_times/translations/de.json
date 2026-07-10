@@ -1,0 +1,51 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "menu_options": {
+          "discover": "Im LAN suchen",
+          "manual": "IP und DeviceToken manuell eingeben",
+          "cloud": "Mit Divoom-Konto anmelden"
+        }
+      },
+      "discover": {
+        "title": "Divoom-Geräte im LAN",
+        "description": "Geräte, die mit derselben öffentlichen IP wie Home Assistant registriert sind.",
+        "data": {
+          "device_id": "Gerät"
+        }
+      },
+      "manual": {
+        "title": "Manuelle Einrichtung",
+        "data": {
+          "host": "IP-Adresse",
+          "port": "Port",
+          "device_id": "Geräte-ID",
+          "device_token": "DeviceToken",
+          "device_name": "Name"
+        }
+      },
+      "cloud": {
+        "title": "Divoom-Cloud-Anmeldung",
+        "description": "Wird nur zum Abholen des DeviceTokens verwendet. Zugangsdaten werden nicht gespeichert.",
+        "data": {
+          "email": "E-Mail",
+          "password": "Passwort"
+        }
+      },
+      "token": {
+        "title": "DeviceToken eingeben",
+        "description": "Einrichtung von {name} unter {ip}. Token aus der Divoom-App oder einem Traffic-Mitschnitt einfügen."
+      }
+    },
+    "error": {
+      "discovery_failed": "Cloud-Discovery fehlgeschlagen. Versuch die manuelle Einrichtung.",
+      "no_devices_found": "Keine Divoom-Geräte im LAN gefunden.",
+      "auth_failed": "DeviceToken vom Gerät abgelehnt.",
+      "login_failed": "Divoom-Cloud-Anmeldung fehlgeschlagen."
+    },
+    "abort": {
+      "already_configured": "Dieses Gerät ist bereits konfiguriert."
+    }
+  }
+}
