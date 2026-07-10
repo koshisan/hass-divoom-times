@@ -6,16 +6,21 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import DivoomAuthError, DivoomConnectionError, DivoomLocalClient
+from .api import (
+    DivoomAuthError,
+    DivoomCloudClient,
+    DivoomCommandError,
+    DivoomConnectionError,
+)
 from .const import (
+    CMD_GET_INDEX,
     CONF_DEVICE_ID,
-    CONF_DEVICE_TOKEN,
-    CONF_HOST,
-    CONF_PORT,
-    DEFAULT_PORT,
+    CONF_TOKEN,
+    CONF_USER_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -28,23 +33,46 @@ class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         super().__init__(
             hass,
             _LOGGER,
-            name=f"{DOMAIN} {entry.data.get(CONF_HOST)}",
+            name=f"{DOMAIN} {entry.data.get(CONF_DEVICE_ID)}",
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
         session = async_get_clientsession(hass)
-        self.client = DivoomLocalClient(
+        self.client = DivoomCloudClient(
             session=session,
-            host=entry.data[CONF_HOST],
-            device_id=entry.data.get(CONF_DEVICE_ID),
-            device_token=entry.data.get(CONF_DEVICE_TOKEN),
-            port=entry.data.get(CONF_PORT, DEFAULT_PORT),
+            user_id=entry.data[CONF_USER_ID],
+            token=entry.data[CONF_TOKEN],
         )
+        self.device_id: int = entry.data[CONF_DEVICE_ID]
         self.entry = entry
+        # Optimistic light state — cloud has no read-back for brightness
+        self._last_brightness: int | None = None
+        self._is_on: bool = True
+
+    @property
+    def last_brightness(self) -> int | None:
+        return self._last_brightness
+
+    @property
+    def is_on(self) -> bool:
+        return self._is_on
+
+    def record_brightness(self, brightness_pct: int) -> None:
+        self._last_brightness = brightness_pct
+        if brightness_pct > 0:
+            self._is_on = True
+
+    def record_on_off(self, on: bool) -> None:
+        self._is_on = on
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
-            return await self.client.get_all_conf()
+            resp = await self.client.send_command(CMD_GET_INDEX, self.device_id)
         except DivoomAuthError as err:
-            raise UpdateFailed(f"auth: {err}") from err
+            raise ConfigEntryAuthFailed(str(err)) from err
         except DivoomConnectionError as err:
             raise UpdateFailed(f"connection: {err}") from err
+        except DivoomCommandError as err:
+            # Some devices refuse GetIndex with the minimal payload — non-fatal.
+            _LOGGER.debug("GetIndex not supported for %s: %s", self.device_id, err)
+            return {}
+        return resp

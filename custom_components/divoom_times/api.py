@@ -1,37 +1,36 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
 
-from .const import (
-    CLOUD_ENDPOINT_DEVICE_LIST,
-    CLOUD_ENDPOINT_LAN_DEVICES,
-    CLOUD_ENDPOINT_USER_LOGIN,
-    CMD_GET_ALL_CONF,
-    CMD_ON_OFF_SCREEN,
-    CMD_SET_BRIGHTNESS,
-    CMD_SET_INDEX,
-    DEFAULT_PORT,
-    DEVICE_ENDPOINT_POST,
-    DIVOOM_CLOUD_BASE,
-)
-
 _LOGGER = logging.getLogger(__name__)
+
+CLOUD_BASE = "https://app.divoom-gz.com"
+
+# Cloud command endpoints — POST to CLOUD_BASE + path with the full command JSON.
+CLOUD_LOGIN = "/UserLogin"
+CLOUD_DEVICE_LIST = "/Device/GetList"
+CLOUD_LAN_DISCOVERY = "/Device/ReturnSameLANDevice"
 
 
 class DivoomError(Exception):
-    """Base error for the Divoom API."""
+    """Base error."""
 
 
 class DivoomAuthError(DivoomError):
-    """Raised when the device rejects the request due to a bad or missing DeviceToken."""
+    """UserId/Token was refused by the cloud, or DeviceToken by a local device."""
+
+
+class DivoomCommandError(DivoomError):
+    """Cloud accepted the request but returned a non-zero ReturnCode."""
 
 
 class DivoomConnectionError(DivoomError):
-    """Raised when we cannot reach the device."""
+    """Network error reaching the cloud or device."""
 
 
 @dataclass(slots=True)
@@ -43,107 +42,124 @@ class LanDevice:
     hardware: int
 
 
-async def cloud_discover_lan_devices(session: aiohttp.ClientSession) -> list[LanDevice]:
-    """Ask the Divoom cloud which of the caller's LAN peers are Divoom devices.
-
-    Works without auth as long as the caller's public IP matches the devices'.
-    """
-    url = f"{DIVOOM_CLOUD_BASE}{CLOUD_ENDPOINT_LAN_DEVICES}"
-    async with session.post(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-        resp.raise_for_status()
-        payload = await resp.json(content_type=None)
-    if payload.get("ReturnCode") != 0:
-        raise DivoomError(f"cloud discovery failed: {payload!r}")
-    out: list[LanDevice] = []
-    for entry in payload.get("DeviceList", []) or []:
-        out.append(
-            LanDevice(
-                device_id=int(entry["DeviceId"]),
-                device_name=str(entry.get("DeviceName") or ""),
-                ip=str(entry["DevicePrivateIP"]),
-                mac=str(entry.get("DeviceMac") or ""),
-                hardware=int(entry.get("Hardware") or 0),
-            )
-        )
-    return out
+@dataclass(slots=True)
+class OwnedDevice:
+    device_id: int
+    device_name: str
+    device_type: int  # a.k.a. Hardware in ReturnSameLANDevice
+    device_version: int
+    private_ip: str
+    mac: str
+    online: bool
 
 
-async def cloud_login(
-    session: aiohttp.ClientSession, email: str, password_md5: str
-) -> dict[str, Any]:
-    """POST /UserLogin. `password_md5` must be the lowercase hex md5 of the password."""
-    url = f"{DIVOOM_CLOUD_BASE}{CLOUD_ENDPOINT_USER_LOGIN}"
-    body = {"Email": email, "Password": password_md5}
-    async with session.post(url, json=body, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-        resp.raise_for_status()
-        return await resp.json(content_type=None)
+def _password_md5(password: str) -> str:
+    return hashlib.md5(password.encode("utf-8")).hexdigest()
 
 
-async def cloud_device_list(
-    session: aiohttp.ClientSession, user_id: int, token: str
-) -> dict[str, Any]:
-    """POST /Device/ReturnDeviceList — the user's owned devices with per-device tokens."""
-    url = f"{DIVOOM_CLOUD_BASE}{CLOUD_ENDPOINT_DEVICE_LIST}"
-    body = {"UserId": user_id, "Token": token}
-    async with session.post(url, json=body, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-        resp.raise_for_status()
-        return await resp.json(content_type=None)
+class DivoomCloudClient:
+    """Talks to Divoom's cloud on behalf of one signed-in user.
 
-
-class DivoomLocalClient:
-    """Talks to a Times Gate / Times Frame over HTTP on port 80.
-
-    Newer firmware requires DeviceId + DeviceToken on most commands.
+    Sessions are cheap — one instance per config entry.
     """
 
     def __init__(
         self,
         session: aiohttp.ClientSession,
-        host: str,
-        device_id: int | None = None,
-        device_token: str | None = None,
-        port: int = DEFAULT_PORT,
-        timeout: float = 5.0,
+        user_id: int | None = None,
+        token: int | None = None,
+        timeout: float = 8.0,
     ) -> None:
         self._session = session
-        self._host = host
-        self._port = port
-        self._device_id = device_id
-        self._device_token = device_token
+        self._user_id = user_id
+        self._token = token
         self._timeout = timeout
 
     @property
-    def url(self) -> str:
-        return f"http://{self._host}:{self._port}{DEVICE_ENDPOINT_POST}"
+    def user_id(self) -> int | None:
+        return self._user_id
 
-    async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        body: dict[str, Any] = dict(payload)
-        if self._device_id is not None:
-            body.setdefault("DeviceId", self._device_id)
-        if self._device_token is not None:
-            body.setdefault("DeviceToken", self._device_token)
-        try:
-            async with self._session.post(
-                self.url, json=body, timeout=aiohttp.ClientTimeout(total=self._timeout)
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json(content_type=None)
-        except aiohttp.ClientError as err:
-            raise DivoomConnectionError(str(err)) from err
-        err_code = data.get("error_code")
-        if isinstance(err_code, str) and "DeviceToken" in err_code:
-            raise DivoomAuthError(err_code)
+    @property
+    def token(self) -> int | None:
+        return self._token
+
+    def set_credentials(self, user_id: int, token: int) -> None:
+        self._user_id = user_id
+        self._token = token
+
+    async def login(self, email: str, password: str) -> dict[str, Any]:
+        body = {"Email": email, "Password": _password_md5(password)}
+        data = await self._post_raw(CLOUD_LOGIN, body)
+        if data.get("ReturnCode") != 0:
+            raise DivoomAuthError(data.get("ReturnMessage") or "login failed")
+        self._user_id = int(data["UserId"])
+        self._token = int(data["Token"])
         return data
 
-    async def get_all_conf(self) -> dict[str, Any]:
-        return await self._post({"Command": CMD_GET_ALL_CONF})
+    async def list_devices(self) -> list[OwnedDevice]:
+        data = await self._post_authed(CLOUD_DEVICE_LIST, {})
+        out: list[OwnedDevice] = []
+        for entry in data.get("DeviceList", []) or []:
+            out.append(
+                OwnedDevice(
+                    device_id=int(entry["DeviceId"]),
+                    device_name=str(entry.get("DeviceName") or ""),
+                    device_type=int(entry.get("DeviceType") or 0),
+                    device_version=int(entry.get("DeviceVersion") or 0),
+                    private_ip=str(entry.get("DevicePrivateIP") or ""),
+                    mac=str(entry.get("DeviceBlueTooth") or ""),
+                    online=str(entry.get("Online") or "0") == "1",
+                )
+            )
+        return out
 
-    async def set_brightness(self, brightness: int) -> None:
-        brightness = max(0, min(100, int(brightness)))
-        await self._post({"Command": CMD_SET_BRIGHTNESS, "Brightness": brightness})
+    async def discover_lan_devices(self) -> list[LanDevice]:
+        """Unauthenticated discovery — cloud matches by public IP."""
+        data = await self._post_raw(CLOUD_LAN_DISCOVERY, {})
+        if data.get("ReturnCode") != 0:
+            raise DivoomError(f"cloud discovery failed: {data!r}")
+        out: list[LanDevice] = []
+        for entry in data.get("DeviceList", []) or []:
+            out.append(
+                LanDevice(
+                    device_id=int(entry["DeviceId"]),
+                    device_name=str(entry.get("DeviceName") or ""),
+                    ip=str(entry["DevicePrivateIP"]),
+                    mac=str(entry.get("DeviceMac") or ""),
+                    hardware=int(entry.get("Hardware") or 0),
+                )
+            )
+        return out
 
-    async def set_screen_on(self, on: bool) -> None:
-        await self._post({"Command": CMD_ON_OFF_SCREEN, "OnOff": 1 if on else 0})
+    async def send_command(
+        self, command: str, device_id: int, extra: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"DeviceId": device_id}
+        if extra:
+            body.update(extra)
+        return await self._post_authed(f"/{command}", body)
 
-    async def set_channel(self, index: int) -> None:
-        await self._post({"Command": CMD_SET_INDEX, "SelectIndex": int(index)})
+    async def _post_authed(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        if self._user_id is None or self._token is None:
+            raise DivoomAuthError("not signed in")
+        full: dict[str, Any] = {"UserId": self._user_id, "Token": self._token}
+        full.update(body)
+        data = await self._post_raw(path, full)
+        rc = data.get("ReturnCode")
+        if rc == 0 or rc is None:
+            return data
+        # 3 = "Request data is incomplete" — surface as command error, not auth
+        raise DivoomCommandError(
+            f"{path} returned code {rc}: {data.get('ReturnMessage', '')}"
+        )
+
+    async def _post_raw(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        url = f"{CLOUD_BASE}{path}"
+        try:
+            async with self._session.post(
+                url, json=body, timeout=aiohttp.ClientTimeout(total=self._timeout)
+            ) as resp:
+                resp.raise_for_status()
+                return await resp.json(content_type=None)
+        except aiohttp.ClientError as err:
+            raise DivoomConnectionError(str(err)) from err

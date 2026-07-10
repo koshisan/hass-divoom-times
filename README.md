@@ -1,33 +1,33 @@
 # Divoom Times — Home Assistant integration
 
-Local control for newer Divoom devices: **Times Gate** and **Times Frame**.
+Cloud-relayed control for newer Divoom devices: **Times Gate** and **Times Frame**.
 
-Existing HA Divoom integrations target older Bluetooth-Classic Aurabox/Pixoo/Timebox hardware or the Pixoo 64 HTTP API. Times Gate and Times Frame ship a newer firmware that requires a per-device `DeviceToken` on every command — none of the existing projects handle it. This integration does.
+## Why this exists
+
+Existing HA Divoom integrations target Bluetooth-Classic Aurabox/Pixoo/Timebox hardware or the Pixoo 64 local HTTP API. Times Gate and Times Frame ship a firmware that requires a per-device `DeviceToken` on every local `/post` request — and that token isn't handed out via any public API.
+
+The workaround: Divoom's cloud accepts the same command names at `https://app.divoom-gz.com/<Command>` when authenticated with the account's `UserId` + login `Token`. The cloud then relays the command to the device. This integration uses that path.
 
 ## Status
 
-- [x] LAN discovery via Divoom cloud (`Device/ReturnSameLANDevice`, no auth needed as long as HA sits on the same public IP as the devices)
-- [x] Manual setup fallback with IP + `DeviceToken`
-- [x] Divoom cloud sign-in path to auto-fetch `DeviceToken` per device
-- [x] Light entity: on/off + brightness (Times Gate)
-- [ ] Times Frame local protocol (device only exposes an unknown service on port 9000 + ADB on 5037 — needs sniffing)
-- [ ] Channel select, notify/text/GIF platforms, sensors — planned
+- [x] Login via Divoom account (`/UserLogin`) — password is md5'd before sending, only the resulting `UserId` + `Token` are stored.
+- [x] Device enumeration via `/Device/GetList` — populates a picker in the config flow.
+- [x] Light entity: on/off (`Channel/OnOffScreen`) + brightness (`Channel/SetBrightness`).
+- [x] Reauth flow when the stored token is refused.
+- [ ] Channel select, notify/text/GIF, sensors — planned.
+- [ ] Local mode with a sniffed `DeviceToken` for offline use — optional future path.
 
 ## Install
 
-Via HACS as a custom repository (`https://github.com/koshisan/hass-divoom-times`, category "Integration"), then add via **Settings → Devices & Services → Add Integration → Divoom Times**.
+Add as HACS custom repository: `https://github.com/koshisan/hass-divoom-times`, category "Integration". Then in HA: **Settings → Devices & Services → Add Integration → Divoom Times**.
 
 ## Configuration
 
-Three entry points:
+Enter your Divoom account email and password. The flow signs in, lists your bound devices, and lets you pick one to add. Each Divoom device becomes its own config entry — repeat the flow for the second one.
 
-1. **Discover** — cloud LAN lookup, pick device, paste `DeviceToken`.
-2. **Manual** — enter IP, port, DeviceId and DeviceToken by hand.
-3. **Cloud** — Divoom account email + password; the flow fetches the DeviceToken from `/UserLogin` + `/Device/ReturnDeviceList` and stores only the resulting token, not the credentials.
+## Latency
 
-## Getting a DeviceToken without an account
-
-If you don't want to hand over Divoom credentials, capture the traffic between the Divoom app and `app.divoom-gz.com` (mitmproxy, Charles, etc.) and copy the `DeviceToken` field out of any signed request payload.
+Every command hits `app.divoom-gz.com` first. Expect a few hundred milliseconds per command. Fine for automations like "dim when the room is empty," not great for real-time visualisation.
 
 ## License
 

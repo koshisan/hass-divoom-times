@@ -6,8 +6,8 @@
   "dependencies": [],
   "documentation": "https://github.com/koshisan/hass-divoom-times",
   "integration_type": "hub",
-  "iot_class": "local_polling",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/koshisan/hass-divoom-times/issues",
-  "requirements": ["aiohttp>=3.9"],
-  "version": "0.1.0"
+  "requirements": [],
+  "version": "0.2.0"
 }
