@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Bei Divoom anmelden",
-        "description": "Einmalige Anmeldung, um den LocalToken für jedes Gerät zu holen. Nur UserId, Cloud-Token und der LocalToken pro Gerät werden gespeichert — nicht das Passwort. Danach läuft alles lokal im LAN.",
+        "description": "Einmalige Anmeldung, um die Geräteliste zu holen und pro Gerät den LocalToken. Nur UserId, Cloud-Token und LocalToken werden gespeichert — nicht das Passwort.",
         "data": {
           "email": "E-Mail",
           "password": "Passwort"
@@ -11,14 +11,21 @@
       },
       "pick_device": {
         "title": "Gerät wählen",
-        "description": "Jedes Gerät wird ein eigener Eintrag. Für das zweite Gerät den Flow nochmal starten.",
+        "description": "Times Gate spricht MQTT (Echtzeit-Status, niedrige Latenz); Times Frame nur HTTP. Der nächste Schritt hängt vom Gerätetyp ab.",
         "data": {
           "device_id": "Gerät"
         }
       },
+      "broker": {
+        "title": "MQTT-Broker für {name}",
+        "description": "LAN-IP des MQTT-Brokers, zu dem sich der Times Gate verbinden soll (meist derselbe wie HA benutzt). Ich melde ihn über App/SetIp bei Divoom an; das Gerät joint beim nächsten Poll.",
+        "data": {
+          "broker_ip": "Broker-IP"
+        }
+      },
       "reauth_confirm": {
         "title": "Erneut anmelden",
-        "description": "Der gespeicherte LocalToken wurde abgelehnt — das Gerät wurde vermutlich neu gekoppelt. Zugangsdaten erneut eingeben, ich hole den Token neu.",
+        "description": "Der gespeicherte Token wurde abgelehnt. Zugangsdaten neu eingeben; ich hole Cloud-Token (für MQTT-Auth) und LocalToken (für HTTP) neu.",
         "data": {
           "email": "E-Mail",
           "password": "Passwort"
@@ -30,6 +37,8 @@
       "cannot_connect": "Divoom-Cloud nicht erreichbar.",
       "no_devices_found": "Keine Divoom-Geräte in diesem Konto gefunden.",
       "unknown_device": "Gerät nicht mehr im Konto.",
+      "mqtt_not_configured": "Für dieses Gerät wird MQTT benötigt, aber Home Assistants MQTT-Integration ist nicht eingerichtet.",
+      "app_set_ip_failed": "Divoom-Cloud lehnt App/SetIp ab — Broker-IP prüfen.",
       "unknown": "Unerwarteter Fehler."
     },
     "abort": {

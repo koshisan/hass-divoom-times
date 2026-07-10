@@ -3,11 +3,11 @@
   "name": "Divoom Times",
   "codeowners": ["@koshisan"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["mqtt"],
   "documentation": "https://github.com/koshisan/hass-divoom-times",
   "integration_type": "hub",
-  "iot_class": "local_polling",
+  "iot_class": "local_push",
   "issue_tracker": "https://github.com/koshisan/hass-divoom-times/issues",
   "requirements": [],
-  "version": "0.4.0"
+  "version": "0.5.0"
 }

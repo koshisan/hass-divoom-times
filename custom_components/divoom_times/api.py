@@ -9,8 +9,6 @@ import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
 
-# The `appin` host (not `app`) is the one that speaks Device/GetListV2 and
-# returns per-device LocalToken values.
 CLOUD_BASE = "https://appin.divoom-gz.com"
 
 
@@ -46,11 +44,7 @@ def _password_md5(password: str) -> str:
 
 
 class DivoomCloudClient:
-    """Login + device enumeration against appin.divoom-gz.com.
-
-    Used once at config-flow time and again on reauth. Never touched at
-    runtime — commands go straight to the device on the LAN.
-    """
+    """Cloud helper for login, device enumeration, and App/SetIp registration."""
 
     def __init__(
         self,
@@ -92,11 +86,7 @@ class DivoomCloudClient:
             raise DivoomAuthError("not signed in")
         data = await self._post(
             "Device/GetListV2",
-            {
-                "UserId": self._user_id,
-                "Token": self._token,
-                "DeviceId": 0,
-            },
+            {"UserId": self._user_id, "Token": self._token, "DeviceId": 0},
         )
         rc = data.get("ReturnCode")
         if rc == 11:
@@ -108,7 +98,6 @@ class DivoomCloudClient:
         out: list[OwnedDevice] = []
         for entry in data.get("DeviceList", []) or []:
             if "LocalToken" not in entry:
-                _LOGGER.debug("device %s has no LocalToken — skipping", entry)
                 continue
             out.append(
                 OwnedDevice(
@@ -122,6 +111,34 @@ class DivoomCloudClient:
                 )
             )
         return out
+
+    async def set_app_ip(
+        self, device_id: int, broker_ip: str, netmask: str = "255.255.255.0"
+    ) -> None:
+        """Tell the Divoom cloud where the device should connect for MQTT.
+
+        The next time the device polls the cloud (seconds), it will (re)connect
+        its MQTT client to `mqtt://<broker_ip>:1883`.
+        """
+        if self._user_id is None or self._token is None:
+            raise DivoomAuthError("not signed in")
+        data = await self._post(
+            "App/SetIp",
+            {
+                "UserId": self._user_id,
+                "Token": self._token,
+                "DeviceId": device_id,
+                "AppIP": broker_ip,
+                "NetMask": netmask,
+            },
+        )
+        rc = data.get("ReturnCode")
+        if rc == 11:
+            raise DivoomAuthError("cloud token no longer valid")
+        if rc != 0:
+            raise DivoomError(
+                f"App/SetIp failed: {rc} {data.get('ReturnMessage', '')}"
+            )
 
     async def _post(self, command: str, body: dict[str, Any]) -> dict[str, Any]:
         url = f"{CLOUD_BASE}/{command}"
@@ -138,14 +155,8 @@ class DivoomCloudClient:
             raise DivoomConnectionError(str(err)) from err
 
 
-class LocalTransport:
-    """Per-device local HTTP client, parameterised by profile.
-
-    Times Frame (HW 510): GET  /divoom_api on port 9000, LocalToken tolerated
-                          but not required.
-    Times Gate  (HW 400): POST /post        on port 80,  LocalToken required.
-    Times Gate  (HW 402): POST /divoom_api  on port 9000, LocalToken required.
-    """
+class HttpTransport:
+    """Per-device HTTP client for Times Frame (and Times Gate as fallback)."""
 
     def __init__(
         self,
@@ -186,8 +197,6 @@ class LocalTransport:
         ec = data.get("error_code")
         rc = data.get("ReturnCode")
         if isinstance(ec, str) and "Token" in ec:
-            # Legacy shape ("DeviceToken is err") that fires when LocalToken
-            # has rotated (device re-paired) or was never valid.
             raise DivoomAuthError(ec)
         if rc == 11 or rc == "11":
             raise DivoomAuthError(data.get("ReturnMessage") or "token rejected")

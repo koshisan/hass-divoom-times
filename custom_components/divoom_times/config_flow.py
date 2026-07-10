@@ -5,6 +5,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.components import mqtt
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -16,6 +17,7 @@ from .api import (
     OwnedDevice,
 )
 from .const import (
+    CONF_BROKER_IP,
     CONF_CLOUD_TOKEN,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
@@ -25,20 +27,25 @@ from .const import (
     CONF_LOCAL_TOKEN,
     CONF_MAC,
     CONF_PASSWORD,
+    CONF_TRANSPORT,
     CONF_USER_ID,
     DOMAIN,
     HARDWARE_NAMES,
+    MQTT_CAPABLE,
+    TRANSPORT_HTTP,
+    TRANSPORT_MQTT,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class DivoomTimesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self) -> None:
         self._client: DivoomCloudClient | None = None
         self._devices: list[OwnedDevice] = []
+        self._picked: OwnedDevice | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -93,31 +100,53 @@ class DivoomTimesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if chosen is None:
                 errors["device_id"] = "unknown_device"
             else:
-                await self.async_set_unique_id(str(chosen.device_id))
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=chosen.device_name or f"Divoom {chosen.device_id}",
-                    data={
-                        CONF_USER_ID: self._client.user_id,
-                        CONF_CLOUD_TOKEN: self._client.token,
-                        CONF_DEVICE_ID: chosen.device_id,
-                        CONF_DEVICE_NAME: chosen.device_name,
-                        CONF_DEVICE_TYPE: chosen.device_type,
-                        CONF_HOST: chosen.private_ip,
-                        CONF_MAC: chosen.mac,
-                        CONF_LOCAL_TOKEN: chosen.local_token,
-                    },
-                )
+                self._picked = chosen
+                if chosen.device_type in MQTT_CAPABLE:
+                    if "mqtt" not in self.hass.config.components:
+                        errors["base"] = "mqtt_not_configured"
+                    else:
+                        return await self.async_step_broker()
+                if not errors:
+                    return await self._create_http_entry(chosen)
 
         options = {
             str(d.device_id): (
                 f"{d.device_name} — {HARDWARE_NAMES.get(d.device_type, f'HW{d.device_type}')}"
+                + (" (MQTT)" if d.device_type in MQTT_CAPABLE else " (HTTP)")
             )
             for d in self._devices
         }
         schema = vol.Schema({vol.Required("device_id"): vol.In(options)})
         return self.async_show_form(
             step_id="pick_device", data_schema=schema, errors=errors
+        )
+
+    async def async_step_broker(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        assert self._picked is not None and self._client is not None
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            broker_ip = user_input[CONF_BROKER_IP].strip()
+            try:
+                await self._client.set_app_ip(self._picked.device_id, broker_ip)
+            except DivoomAuthError:
+                errors["base"] = "invalid_auth"
+            except DivoomError as err:
+                _LOGGER.warning("App/SetIp failed: %s", err)
+                errors["base"] = "app_set_ip_failed"
+            else:
+                return await self._create_mqtt_entry(self._picked, broker_ip)
+
+        schema = vol.Schema({vol.Required(CONF_BROKER_IP): str})
+        return self.async_show_form(
+            step_id="broker",
+            data_schema=schema,
+            description_placeholders={
+                "name": self._picked.device_name,
+                "device_id": str(self._picked.device_id),
+            },
+            errors=errors,
         )
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
@@ -156,7 +185,7 @@ class DivoomTimesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             CONF_USER_ID: client.user_id,
                             CONF_CLOUD_TOKEN: client.token,
                             CONF_LOCAL_TOKEN: match.local_token,
-                            CONF_HOST: match.private_ip or entry.data[CONF_HOST],
+                            CONF_HOST: match.private_ip or entry.data.get(CONF_HOST, ""),
                         }
                         self.hass.config_entries.async_update_entry(
                             entry, data=new_data
@@ -169,4 +198,45 @@ class DivoomTimesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(
             step_id="reauth_confirm", data_schema=schema, errors=errors
+        )
+
+    async def _create_http_entry(self, device: OwnedDevice) -> FlowResult:
+        assert self._client is not None
+        await self.async_set_unique_id(str(device.device_id))
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title=device.device_name or f"Divoom {device.device_id}",
+            data={
+                CONF_TRANSPORT: TRANSPORT_HTTP,
+                CONF_USER_ID: self._client.user_id,
+                CONF_CLOUD_TOKEN: self._client.token,
+                CONF_DEVICE_ID: device.device_id,
+                CONF_DEVICE_NAME: device.device_name,
+                CONF_DEVICE_TYPE: device.device_type,
+                CONF_HOST: device.private_ip,
+                CONF_MAC: device.mac,
+                CONF_LOCAL_TOKEN: device.local_token,
+            },
+        )
+
+    async def _create_mqtt_entry(
+        self, device: OwnedDevice, broker_ip: str
+    ) -> FlowResult:
+        assert self._client is not None
+        await self.async_set_unique_id(str(device.device_id))
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title=device.device_name or f"Divoom {device.device_id}",
+            data={
+                CONF_TRANSPORT: TRANSPORT_MQTT,
+                CONF_USER_ID: self._client.user_id,
+                CONF_CLOUD_TOKEN: self._client.token,
+                CONF_DEVICE_ID: device.device_id,
+                CONF_DEVICE_NAME: device.device_name,
+                CONF_DEVICE_TYPE: device.device_type,
+                CONF_HOST: device.private_ip,
+                CONF_MAC: device.mac,
+                CONF_LOCAL_TOKEN: device.local_token,
+                CONF_BROKER_IP: broker_ip,
+            },
         )
