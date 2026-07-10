@@ -1,33 +1,49 @@
 # Divoom Times — Home Assistant integration
 
-Cloud-relayed control for newer Divoom devices: **Times Gate** and **Times Frame**.
+Local (and cloud-relay) control for newer Divoom devices: **Times Gate** and **Times Frame**.
 
 ## Why this exists
 
-Existing HA Divoom integrations target Bluetooth-Classic Aurabox/Pixoo/Timebox hardware or the Pixoo 64 local HTTP API. Times Gate and Times Frame ship a firmware that requires a per-device `DeviceToken` on every local `/post` request — and that token isn't handed out via any public API.
+Existing HA Divoom integrations target Bluetooth-Classic Aurabox/Pixoo/Timebox or the Pixoo 64 local HTTP API. Neither handles the newer Times Gate / Times Frame firmware, which:
 
-The workaround: Divoom's cloud accepts the same command names at `https://app.divoom-gz.com/<Command>` when authenticated with the account's `UserId` + login `Token`. The cloud then relays the command to the device. This integration uses that path.
+- Times Frame: local API lives at `GET http://<ip>:9000/divoom_api` with a JSON body — an unusual shape (GET + body) that stumps generic reverse-engineering tools.
+- Times Gate (HW 400): local API at `POST http://<ip>:80/post` and requires a `LocalToken` field. The token is shown in the device's settings menu.
+- Times Gate (HW 402): local API at `POST http://<ip>:9000/divoom_api`, also with `LocalToken`.
+
+This integration knows all three shapes and picks the right one per device based on the hardware code returned by `Device/GetList`.
+
+## Transports
+
+| Hardware | Transport | Endpoint | Auth |
+|---|---|---|---|
+| Times Frame (510) | local | GET :9000/divoom_api | none |
+| Times Gate HW 400 | local | POST :80/post | LocalToken |
+| Times Gate HW 402 | local | POST :9000/divoom_api | LocalToken |
+| fallback | cloud | POST app.divoom-gz.com/{Command} | account UserId + Token |
+
+The cloud path is used when a local transport can't be reached or the user skips the LocalToken step.
 
 ## Status
 
-- [x] Login via Divoom account (`/UserLogin`) — password is md5'd before sending, only the resulting `UserId` + `Token` are stored.
-- [x] Device enumeration via `/Device/GetList` — populates a picker in the config flow.
-- [x] Light entity: on/off (`Channel/OnOffScreen`) + brightness (`Channel/SetBrightness`).
-- [x] Reauth flow when the stored token is refused.
-- [ ] Channel select, notify/text/GIF, sensors — planned.
-- [ ] Local mode with a sniffed `DeviceToken` for offline use — optional future path.
+- [x] Login via Divoom account (`/UserLogin`) — password md5'd before send, only the resulting `UserId` + `Token` are stored.
+- [x] Device enumeration via `/Device/GetList`.
+- [x] Local transport for Times Frame (no auth).
+- [x] Local transport for Times Gate (LocalToken).
+- [x] Cloud transport fallback.
+- [x] Light entity: on/off + brightness.
+- [x] Reauth flow.
+- [ ] Channel select, notify/text/GIF, sensors.
 
 ## Install
 
 Add as HACS custom repository: `https://github.com/koshisan/hass-divoom-times`, category "Integration". Then in HA: **Settings → Devices & Services → Add Integration → Divoom Times**.
 
-## Configuration
+## Configuration flow
 
-Enter your Divoom account email and password. The flow signs in, lists your bound devices, and lets you pick one to add. Each Divoom device becomes its own config entry — repeat the flow for the second one.
-
-## Latency
-
-Every command hits `app.divoom-gz.com` first. Expect a few hundred milliseconds per command. Fine for automations like "dim when the room is empty," not great for real-time visualisation.
+1. Enter Divoom account email + password (used once to enumerate devices; only `UserId` + `Token` are stored).
+2. Pick a device.
+3. If it's a Times Gate, you'll be asked for the `LocalToken` from the device's settings menu. Leave blank to fall back to cloud-relay.
+4. Repeat for the second device.
 
 ## License
 

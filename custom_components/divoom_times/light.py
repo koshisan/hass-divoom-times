@@ -18,8 +18,10 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_DEVICE_TYPE,
     CONF_MAC,
+    CONF_TRANSPORT,
     DOMAIN,
     HARDWARE_NAMES,
+    TRANSPORT_LOCAL,
 )
 from .coordinator import DivoomCoordinator
 
@@ -40,13 +42,15 @@ class DivoomLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
     _attr_name = None
     _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
     _attr_color_mode = ColorMode.BRIGHTNESS
-    _attr_assumed_state = True
 
     def __init__(self, coordinator: DivoomCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         data = entry.data
         dev_id = data[CONF_DEVICE_ID]
         self._attr_unique_id = f"{DOMAIN}_{dev_id}_light"
+        # Local transport gets read-back via GetAllConf so state is trusted.
+        # Cloud transport has no brightness read-back — mark assumed.
+        self._attr_assumed_state = data[CONF_TRANSPORT] != TRANSPORT_LOCAL
         hw = data.get(CONF_DEVICE_TYPE, 0)
         mac = data.get(CONF_MAC)
         connections = {("mac", mac)} if mac else set()
@@ -70,36 +74,28 @@ class DivoomLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
         return max(0, min(255, round(pct * 255 / 100)))
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        client = self.coordinator.client
-        device_id = self.coordinator.device_id
         try:
             if ATTR_BRIGHTNESS in kwargs:
                 pct = max(1, round(int(kwargs[ATTR_BRIGHTNESS]) * 100 / 255))
-                await client.send_command(
-                    CMD_ON_OFF_SCREEN, device_id, {"OnOff": 1}
-                )
-                await client.send_command(
-                    CMD_SET_BRIGHTNESS, device_id, {"Brightness": pct}
+                await self.coordinator.transport.send(CMD_ON_OFF_SCREEN, {"OnOff": 1})
+                await self.coordinator.transport.send(
+                    CMD_SET_BRIGHTNESS, {"Brightness": pct}
                 )
                 self.coordinator.record_brightness(pct)
                 self.coordinator.record_on_off(True)
             else:
-                await client.send_command(
-                    CMD_ON_OFF_SCREEN, device_id, {"OnOff": 1}
-                )
+                await self.coordinator.transport.send(CMD_ON_OFF_SCREEN, {"OnOff": 1})
                 self.coordinator.record_on_off(True)
         except DivoomError as err:
-            _LOGGER.warning("turn_on failed for %s: %s", device_id, err)
+            _LOGGER.warning("turn_on failed: %s", err)
             raise
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        client = self.coordinator.client
-        device_id = self.coordinator.device_id
         try:
-            await client.send_command(CMD_ON_OFF_SCREEN, device_id, {"OnOff": 0})
+            await self.coordinator.transport.send(CMD_ON_OFF_SCREEN, {"OnOff": 0})
         except DivoomError as err:
-            _LOGGER.warning("turn_off failed for %s: %s", device_id, err)
+            _LOGGER.warning("turn_off failed: %s", err)
             raise
         self.coordinator.record_on_off(False)
         self.async_write_ha_state()

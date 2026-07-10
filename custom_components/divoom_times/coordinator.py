@@ -11,40 +11,67 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
+    CloudTransport,
     DivoomAuthError,
-    DivoomCloudClient,
     DivoomCommandError,
     DivoomConnectionError,
+    DivoomTransport,
+    LocalTransport,
 )
 from .const import (
-    CMD_GET_INDEX,
+    CMD_GET_ALL_CONF,
     CONF_DEVICE_ID,
+    CONF_DEVICE_TYPE,
+    CONF_HOST,
+    CONF_LOCAL_TOKEN,
     CONF_TOKEN,
+    CONF_TRANSPORT,
     CONF_USER_ID,
-    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL_CLOUD,
+    DEFAULT_SCAN_INTERVAL_LOCAL,
     DOMAIN,
+    LOCAL_PROFILES,
+    TRANSPORT_LOCAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
+def _build_transport(hass: HomeAssistant, entry: ConfigEntry) -> DivoomTransport:
+    session = async_get_clientsession(hass)
+    if entry.data[CONF_TRANSPORT] == TRANSPORT_LOCAL:
+        profile = LOCAL_PROFILES[entry.data[CONF_DEVICE_TYPE]]
+        return LocalTransport(
+            session=session,
+            host=entry.data[CONF_HOST],
+            port=profile.port,
+            path=profile.path,
+            method=profile.method,
+            local_token=entry.data.get(CONF_LOCAL_TOKEN),
+        )
+    return CloudTransport(
+        session=session,
+        user_id=entry.data[CONF_USER_ID],
+        token=entry.data[CONF_TOKEN],
+        device_id=entry.data[CONF_DEVICE_ID],
+    )
+
+
 class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        interval = (
+            DEFAULT_SCAN_INTERVAL_LOCAL
+            if entry.data[CONF_TRANSPORT] == TRANSPORT_LOCAL
+            else DEFAULT_SCAN_INTERVAL_CLOUD
+        )
         super().__init__(
             hass,
             _LOGGER,
             name=f"{DOMAIN} {entry.data.get(CONF_DEVICE_ID)}",
-            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            update_interval=timedelta(seconds=interval),
         )
-        session = async_get_clientsession(hass)
-        self.client = DivoomCloudClient(
-            session=session,
-            user_id=entry.data[CONF_USER_ID],
-            token=entry.data[CONF_TOKEN],
-        )
-        self.device_id: int = entry.data[CONF_DEVICE_ID]
+        self.transport = _build_transport(hass, entry)
         self.entry = entry
-        # Optimistic light state — cloud has no read-back for brightness
         self._last_brightness: int | None = None
         self._is_on: bool = True
 
@@ -66,13 +93,17 @@ class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
-            resp = await self.client.send_command(CMD_GET_INDEX, self.device_id)
+            resp = await self.transport.send(CMD_GET_ALL_CONF)
         except DivoomAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except DivoomConnectionError as err:
             raise UpdateFailed(f"connection: {err}") from err
         except DivoomCommandError as err:
-            # Some devices refuse GetIndex with the minimal payload — non-fatal.
-            _LOGGER.debug("GetIndex not supported for %s: %s", self.device_id, err)
+            _LOGGER.debug("GetAllConf not supported: %s", err)
             return {}
+        b = resp.get("Brightness")
+        if isinstance(b, int):
+            self._last_brightness = b
+        if isinstance(resp.get("LightSwitch"), int):
+            self._is_on = bool(resp["LightSwitch"])
         return resp

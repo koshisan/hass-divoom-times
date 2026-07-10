@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,8 +11,6 @@ import aiohttp
 _LOGGER = logging.getLogger(__name__)
 
 CLOUD_BASE = "https://app.divoom-gz.com"
-
-# Cloud command endpoints — POST to CLOUD_BASE + path with the full command JSON.
 CLOUD_LOGIN = "/UserLogin"
 CLOUD_DEVICE_LIST = "/Device/GetList"
 CLOUD_LAN_DISCOVERY = "/Device/ReturnSameLANDevice"
@@ -22,15 +21,15 @@ class DivoomError(Exception):
 
 
 class DivoomAuthError(DivoomError):
-    """UserId/Token was refused by the cloud, or DeviceToken by a local device."""
+    """Rejected credentials — cloud login or local token."""
 
 
 class DivoomCommandError(DivoomError):
-    """Cloud accepted the request but returned a non-zero ReturnCode."""
+    """Non-zero ReturnCode from a valid endpoint."""
 
 
 class DivoomConnectionError(DivoomError):
-    """Network error reaching the cloud or device."""
+    """Network error."""
 
 
 @dataclass(slots=True)
@@ -46,7 +45,7 @@ class LanDevice:
 class OwnedDevice:
     device_id: int
     device_name: str
-    device_type: int  # a.k.a. Hardware in ReturnSameLANDevice
+    device_type: int
     device_version: int
     private_ip: str
     mac: str
@@ -57,11 +56,122 @@ def _password_md5(password: str) -> str:
     return hashlib.md5(password.encode("utf-8")).hexdigest()
 
 
-class DivoomCloudClient:
-    """Talks to Divoom's cloud on behalf of one signed-in user.
+class DivoomTransport(ABC):
+    """Abstract command transport for a single device."""
 
-    Sessions are cheap — one instance per config entry.
+    @abstractmethod
+    async def send(
+        self, command: str, extra: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        ...
+
+
+class LocalTransport(DivoomTransport):
+    """Local HTTP transport with per-device profile.
+
+    Times Frame (HW 510): GET  /divoom_api on port 9000, no token.
+    Times Gate HW 400   : POST /post        on port 80,   requires LocalToken.
+    Times Gate HW 402   : POST /divoom_api  on port 9000, requires LocalToken.
     """
+
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        host: str,
+        port: int,
+        path: str,
+        method: str,
+        local_token: int | None = None,
+        timeout: float = 5.0,
+    ) -> None:
+        self._session = session
+        self._host = host
+        self._port = port
+        self._path = path
+        self._method = method
+        self._local_token = local_token
+        self._timeout = timeout
+
+    async def send(
+        self, command: str, extra: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"Command": command}
+        if self._local_token is not None:
+            body["LocalToken"] = self._local_token
+        if extra:
+            body.update(extra)
+        url = f"http://{self._host}:{self._port}{self._path}"
+        try:
+            async with self._session.request(
+                self._method,
+                url,
+                json=body,
+                timeout=aiohttp.ClientTimeout(total=self._timeout),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+        except aiohttp.ClientError as err:
+            raise DivoomConnectionError(str(err)) from err
+        # Older firmware returns error_code as string, newer as ReturnCode int.
+        ec = data.get("error_code")
+        rc = data.get("ReturnCode")
+        if isinstance(ec, str) and "Token" in ec:
+            raise DivoomAuthError(ec)
+        if rc not in (None, 0):
+            raise DivoomCommandError(
+                f"{command}: rc={rc} {data.get('ReturnMessage', '')}"
+            )
+        if isinstance(ec, str) and ec not in ("", "0"):
+            raise DivoomCommandError(f"{command}: {ec}")
+        return data
+
+
+class CloudTransport(DivoomTransport):
+    """Cloud relay — works for any signed-in device without a LocalToken."""
+
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        user_id: int,
+        token: int,
+        device_id: int,
+        timeout: float = 8.0,
+    ) -> None:
+        self._session = session
+        self._user_id = user_id
+        self._token = token
+        self._device_id = device_id
+        self._timeout = timeout
+
+    async def send(
+        self, command: str, extra: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "UserId": self._user_id,
+            "Token": self._token,
+            "DeviceId": self._device_id,
+        }
+        if extra:
+            body.update(extra)
+        url = f"{CLOUD_BASE}/{command}"
+        try:
+            async with self._session.post(
+                url, json=body, timeout=aiohttp.ClientTimeout(total=self._timeout)
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+        except aiohttp.ClientError as err:
+            raise DivoomConnectionError(str(err)) from err
+        rc = data.get("ReturnCode")
+        if rc not in (None, 0):
+            raise DivoomCommandError(
+                f"{command}: rc={rc} {data.get('ReturnMessage', '')}"
+            )
+        return data
+
+
+class DivoomCloudClient:
+    """Login, discovery, and device listing against app.divoom-gz.com."""
 
     def __init__(
         self,
@@ -83,13 +193,9 @@ class DivoomCloudClient:
     def token(self) -> int | None:
         return self._token
 
-    def set_credentials(self, user_id: int, token: int) -> None:
-        self._user_id = user_id
-        self._token = token
-
     async def login(self, email: str, password: str) -> dict[str, Any]:
         body = {"Email": email, "Password": _password_md5(password)}
-        data = await self._post_raw(CLOUD_LOGIN, body)
+        data = await self._post(CLOUD_LOGIN, body)
         if data.get("ReturnCode") != 0:
             raise DivoomAuthError(data.get("ReturnMessage") or "login failed")
         self._user_id = int(data["UserId"])
@@ -97,7 +203,11 @@ class DivoomCloudClient:
         return data
 
     async def list_devices(self) -> list[OwnedDevice]:
-        data = await self._post_authed(CLOUD_DEVICE_LIST, {})
+        if self._user_id is None or self._token is None:
+            raise DivoomAuthError("not signed in")
+        data = await self._post(
+            CLOUD_DEVICE_LIST, {"UserId": self._user_id, "Token": self._token}
+        )
         out: list[OwnedDevice] = []
         for entry in data.get("DeviceList", []) or []:
             out.append(
@@ -113,47 +223,7 @@ class DivoomCloudClient:
             )
         return out
 
-    async def discover_lan_devices(self) -> list[LanDevice]:
-        """Unauthenticated discovery — cloud matches by public IP."""
-        data = await self._post_raw(CLOUD_LAN_DISCOVERY, {})
-        if data.get("ReturnCode") != 0:
-            raise DivoomError(f"cloud discovery failed: {data!r}")
-        out: list[LanDevice] = []
-        for entry in data.get("DeviceList", []) or []:
-            out.append(
-                LanDevice(
-                    device_id=int(entry["DeviceId"]),
-                    device_name=str(entry.get("DeviceName") or ""),
-                    ip=str(entry["DevicePrivateIP"]),
-                    mac=str(entry.get("DeviceMac") or ""),
-                    hardware=int(entry.get("Hardware") or 0),
-                )
-            )
-        return out
-
-    async def send_command(
-        self, command: str, device_id: int, extra: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        body: dict[str, Any] = {"DeviceId": device_id}
-        if extra:
-            body.update(extra)
-        return await self._post_authed(f"/{command}", body)
-
-    async def _post_authed(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        if self._user_id is None or self._token is None:
-            raise DivoomAuthError("not signed in")
-        full: dict[str, Any] = {"UserId": self._user_id, "Token": self._token}
-        full.update(body)
-        data = await self._post_raw(path, full)
-        rc = data.get("ReturnCode")
-        if rc == 0 or rc is None:
-            return data
-        # 3 = "Request data is incomplete" — surface as command error, not auth
-        raise DivoomCommandError(
-            f"{path} returned code {rc}: {data.get('ReturnMessage', '')}"
-        )
-
-    async def _post_raw(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         url = f"{CLOUD_BASE}{path}"
         try:
             async with self._session.post(
