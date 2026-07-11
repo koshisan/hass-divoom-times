@@ -27,12 +27,17 @@ DEFAULT_SCAN_INTERVAL = 30
 # Device commands
 CMD_SET_BRIGHTNESS = "Channel/SetBrightness"
 CMD_ON_OFF_SCREEN = "Channel/OnOffScreen"
+CMD_GET_ON_OFF_SCREEN = "Channel/GetOnOffScreen"
 CMD_GET_INDEX = "Channel/GetIndex"
 CMD_SET_INDEX = "Channel/SetIndex"
 CMD_GET_ALL_CONF = "Channel/GetAllConf"
 CMD_HEARTBEAT = "Device/Hearbeat"  # sic — Divoom's typo, verified on the wire
 CMD_DISCONNECT_MQTT = "Device/DisconnectMqtt"
 CMD_CONNECT_APP = "Device/ConnectApp"
+
+# Hybrid intervals for MQTT devices (Times Gate).
+MQTT_ONOFF_POLL_INTERVAL = 30       # seconds — Channel/GetOnOffScreen via MQTT
+MQTT_HTTP_POLL_INTERVAL = 60        # seconds — Channel/GetAllConf via HTTP for brightness
 
 # Divoom "DeviceType" == Hardware code from Device/GetListV2.
 HW_TIMES_GATE_V1 = 400

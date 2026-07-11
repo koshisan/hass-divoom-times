@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import timedelta
@@ -10,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -22,7 +24,10 @@ from .const import (
     CMD_CONNECT_APP,
     CMD_DISCONNECT_MQTT,
     CMD_GET_ALL_CONF,
+    CMD_GET_ON_OFF_SCREEN,
     CMD_HEARTBEAT,
+    CMD_ON_OFF_SCREEN,
+    CMD_SET_BRIGHTNESS,
     CONF_CLOUD_TOKEN,
     CONF_DEVICE_ID,
     CONF_DEVICE_TYPE,
@@ -33,7 +38,8 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     HTTP_PROFILES,
-    MQTT_TOPIC_DEVICE,
+    MQTT_HTTP_POLL_INTERVAL,
+    MQTT_ONOFF_POLL_INTERVAL,
     MQTT_TOPIC_LWT,
     TRANSPORT_MQTT,
 )
@@ -43,9 +49,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Push-driven for MQTT, poll-driven for HTTP.
+    """MQTT push + HTTP fallback for state read-back.
 
-    Both variants expose the same interface to entities via `data`.
+    For an MQTT-transport entry we still run periodic HTTP `Channel/GetAllConf`
+    polls because Times Gate only replies to a handful of Get commands over
+    MQTT — brightness in particular is unreadable that way. Commands still
+    go out over MQTT.
     """
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -65,20 +74,13 @@ class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._is_mqtt: bool = entry.data[CONF_TRANSPORT] == TRANSPORT_MQTT
         self._online: bool = False
         self._last_heartbeat: float | None = None
-        self._unsub_dispatcher = None
+        self._unsubs: list = []
 
-        if self._is_mqtt:
-            self.mqtt = MqttTransport(
-                hass=hass,
-                device_id=self.device_id,
-                user_id=entry.data[CONF_USER_ID],
-                cloud_token=entry.data[CONF_CLOUD_TOKEN],
-            )
-            self.http = None
-        else:
-            self.mqtt = None
-            session = async_get_clientsession(hass)
-            profile = HTTP_PROFILES[entry.data[CONF_DEVICE_TYPE]]
+        # HTTP is always available if we know the LocalToken — used by MQTT
+        # entries too, as a supplementary poller for brightness.
+        session = async_get_clientsession(hass)
+        profile = HTTP_PROFILES.get(entry.data[CONF_DEVICE_TYPE])
+        if profile is not None and entry.data.get(CONF_HOST):
             self.http = HttpTransport(
                 session=session,
                 host=entry.data[CONF_HOST],
@@ -87,6 +89,18 @@ class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 method=profile.method,
                 local_token=entry.data[CONF_LOCAL_TOKEN],
             )
+        else:
+            self.http = None
+
+        if self._is_mqtt:
+            self.mqtt = MqttTransport(
+                hass=hass,
+                device_id=self.device_id,
+                user_id=entry.data[CONF_USER_ID],
+                cloud_token=entry.data[CONF_CLOUD_TOKEN],
+            )
+        else:
+            self.mqtt = None
 
     @property
     def is_mqtt(self) -> bool:
@@ -103,40 +117,61 @@ class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_setup(self) -> None:
         if self._is_mqtt:
             await self.mqtt.async_setup()
-            self._unsub_dispatcher = async_dispatcher_connect(
-                self.hass,
-                signal_device_message(self.device_id),
-                self._on_mqtt_message,
+            self._unsubs.append(
+                async_dispatcher_connect(
+                    self.hass,
+                    signal_device_message(self.device_id),
+                    self._on_mqtt_message,
+                )
             )
-            # We're driven by heartbeats — nothing to prime.
             self.async_set_updated_data({})
+            # Prime state and set up hybrid pollers.
+            self.hass.async_create_task(self._prime_state())
+            self._unsubs.append(
+                async_track_time_interval(
+                    self.hass,
+                    self._poll_onoff_via_mqtt,
+                    timedelta(seconds=MQTT_ONOFF_POLL_INTERVAL),
+                )
+            )
+            if self.http is not None:
+                self._unsubs.append(
+                    async_track_time_interval(
+                        self.hass,
+                        self._poll_state_via_http,
+                        timedelta(seconds=MQTT_HTTP_POLL_INTERVAL),
+                    )
+                )
         else:
             await self.async_config_entry_first_refresh()
 
     async def async_teardown(self) -> None:
-        if self._unsub_dispatcher:
-            self._unsub_dispatcher()
-            self._unsub_dispatcher = None
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs.clear()
         if self.mqtt is not None:
             await self.mqtt.async_teardown()
 
     async def async_send(
         self, command: str, extra: dict[str, Any] | None = None
     ) -> None:
-        """Fire-and-forget for MQTT; awaited HTTP round trip otherwise."""
-        if self._is_mqtt:
-            await self.mqtt.send(command, extra)
-        else:
-            try:
+        """Fire a command; MQTT for MQTT entries, HTTP otherwise."""
+        try:
+            if self._is_mqtt:
+                await self.mqtt.send(command, extra)
+                # MQTT commands are silent; nudge the read-back paths so the UI
+                # doesn't sit for the full poll interval on a stale value.
+                self.hass.async_create_task(self._refresh_after_command())
+            else:
                 await self.http.send(command, extra)
-            except DivoomAuthError as err:
-                raise ConfigEntryAuthFailed(str(err)) from err
+                await self.async_request_refresh()
+        except DivoomAuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
 
     async def _async_update_data(self) -> dict[str, Any]:
         if self._is_mqtt:
-            # Push-driven — DataUpdateCoordinator shouldn't be scheduled here
-            # because update_interval is None. This branch is defensive.
             return self.data or {}
+        assert self.http is not None
         try:
             resp = await self.http.send(CMD_GET_ALL_CONF)
         except DivoomAuthError as err:
@@ -150,11 +185,54 @@ class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._online = True
         return resp
 
+    async def _prime_state(self) -> None:
+        await asyncio.sleep(0.2)
+        await self._poll_onoff_via_mqtt()
+        if self.http is not None:
+            await self._poll_state_via_http()
+
+    async def _poll_onoff_via_mqtt(self, _now=None) -> None:
+        try:
+            await self.mqtt.send(CMD_GET_ON_OFF_SCREEN)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("MQTT GetOnOffScreen failed: %s", err)
+
+    async def _poll_state_via_http(self, _now=None) -> None:
+        if self.http is None:
+            return
+        try:
+            resp = await self.http.send(CMD_GET_ALL_CONF)
+        except DivoomAuthError as err:
+            _LOGGER.warning("HTTP GetAllConf auth failure: %s", err)
+            return
+        except (DivoomConnectionError, DivoomCommandError) as err:
+            _LOGGER.debug("HTTP GetAllConf failed: %s", err)
+            return
+        current = dict(self.data or {})
+        for key in (
+            "Brightness",
+            "LightSwitch",
+            "MirrorFlag",
+            "TemperatureMode",
+            "Time24Flag",
+            "DateFormat",
+        ):
+            if key in resp:
+                current[key] = resp[key]
+        current["Online"] = 1 if self._online or self._is_mqtt else 0
+        self.async_set_updated_data(current)
+
+    async def _refresh_after_command(self) -> None:
+        # Give the device a beat to apply, then re-read.
+        await asyncio.sleep(0.4)
+        await self._poll_onoff_via_mqtt()
+        if self.http is not None:
+            await self._poll_state_via_http()
+
     @callback
     def _on_mqtt_message(self, topic: str, data: dict[str, Any]) -> None:
         command = data.get("Command")
         current = dict(self.data or {})
-        current["_last_command"] = command
         if topic == MQTT_TOPIC_LWT and command == CMD_DISCONNECT_MQTT:
             self._online = False
         elif command in (CMD_HEARTBEAT, CMD_CONNECT_APP):
@@ -163,11 +241,18 @@ class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             wifi = data.get("WifiSingal")
             if isinstance(wifi, int):
                 current["WifiSingal"] = wifi
-        elif command == "Channel/OnOffScreen":
-            if isinstance(data.get("OnOff"), int):
-                current["LightSwitch"] = int(data["OnOff"])
-        elif command == "Channel/SetBrightness":
-            if isinstance(data.get("Brightness"), int):
-                current["Brightness"] = int(data["Brightness"])
+        elif command == CMD_GET_ON_OFF_SCREEN:
+            on = data.get("OnOff")
+            if isinstance(on, int):
+                current["LightSwitch"] = int(on)
+                self._online = True
+        elif command == CMD_ON_OFF_SCREEN:
+            on = data.get("OnOff")
+            if isinstance(on, int):
+                current["LightSwitch"] = int(on)
+        elif command == CMD_SET_BRIGHTNESS:
+            b = data.get("Brightness")
+            if isinstance(b, int):
+                current["Brightness"] = int(b)
         current["Online"] = 1 if self._online else 0
         self.async_set_updated_data(current)

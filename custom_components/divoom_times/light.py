@@ -18,10 +18,8 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_DEVICE_TYPE,
     CONF_MAC,
-    CONF_TRANSPORT,
     DOMAIN,
     HARDWARE_NAMES,
-    TRANSPORT_MQTT,
 )
 from .coordinator import DivoomCoordinator
 
@@ -48,9 +46,6 @@ class DivoomLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
         data = entry.data
         dev_id = data[CONF_DEVICE_ID]
         self._attr_unique_id = f"{DOMAIN}_{dev_id}_light"
-        # MQTT feeds arrive from device heartbeats + response echoes; HTTP
-        # polls GetAllConf. Both give real read-back — no assumed state.
-        self._attr_assumed_state = data[CONF_TRANSPORT] == TRANSPORT_MQTT and False
         hw = data.get(CONF_DEVICE_TYPE, 0)
         mac = data.get(CONF_MAC)
         connections = {("mac", mac)} if mac else set()
