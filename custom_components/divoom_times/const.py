@@ -21,6 +21,7 @@ DEFAULT_SCAN_INTERVAL = 15
 # Verified device commands (Times Gate + Times Frame).
 CMD_SET_BRIGHTNESS = "Channel/SetBrightness"
 CMD_ON_OFF_SCREEN = "Channel/OnOffScreen"
+CMD_GET_ON_OFF_SCREEN = "Channel/GetOnOffScreen"
 CMD_SET_INDEX = "Channel/SetIndex"
 CMD_GET_ALL_CONF = "Channel/GetAllConf"
 CMD_SEND_HTTP_TEXT = "Draw/SendHttpText"
@@ -67,5 +68,10 @@ HTTP_PROFILES: dict[int, HttpProfile] = {
 # brightness / on-off but ignores channel/text.
 SUPPORTS_CHANNEL_SELECT: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
 SUPPORTS_SEND_TEXT: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
+
+# Hardware families whose GetAllConf actually returns brightness/state.
+# Times Frame answers GetAllConf with an empty ack — for it we have to
+# poll GetOnOffScreen and track Brightness optimistically off Set-echoes.
+GETALLCONF_HAS_STATE: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
 
 SERVICE_SEND_TEXT = "send_text"
