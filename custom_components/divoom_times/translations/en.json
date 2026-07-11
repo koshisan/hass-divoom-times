@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Sign in to Divoom",
-        "description": "One-time sign-in to enumerate devices and fetch each LocalToken. Only UserId, cloud Token, and per-device LocalToken are stored — not your password.",
+        "description": "One-time sign-in to enumerate devices and fetch each LocalToken. Only UserId, cloud Token, and per-device LocalToken are stored — not your password. After that, all commands stay on your LAN.",
         "data": {
           "email": "Email",
           "password": "Password"
@@ -11,21 +11,14 @@
       },
       "pick_device": {
         "title": "Pick a device",
-        "description": "Times Gate speaks MQTT (real-time state, low latency); Times Frame speaks HTTP only. The next step depends on which one you pick.",
+        "description": "Each device becomes its own entry. Add the flow again for the second one.",
         "data": {
           "device_id": "Device"
         }
       },
-      "broker": {
-        "title": "MQTT broker for {name}",
-        "description": "Enter the LAN IP of the MQTT broker your Times Gate should connect to (usually the same one Home Assistant uses). I'll register it with the Divoom cloud via App/SetIp; the device joins on its next poll.",
-        "data": {
-          "broker_ip": "Broker IP"
-        }
-      },
       "reauth_confirm": {
         "title": "Sign in again",
-        "description": "The stored token was rejected. Re-enter your Divoom credentials; I'll refresh both the cloud token (for MQTT auth) and the LocalToken (for HTTP).",
+        "description": "The stored token was rejected. Re-enter your Divoom credentials to refresh the LocalToken.",
         "data": {
           "email": "Email",
           "password": "Password"
@@ -37,13 +30,25 @@
       "cannot_connect": "Could not reach the Divoom cloud.",
       "no_devices_found": "No Divoom devices found on this account.",
       "unknown_device": "That device is no longer on the account.",
-      "mqtt_not_configured": "This device needs MQTT, but Home Assistant's MQTT integration isn't set up.",
-      "app_set_ip_failed": "Divoom cloud refused App/SetIp — check the broker IP.",
       "unknown": "Unexpected error."
     },
     "abort": {
       "already_configured": "This device is already configured.",
       "reauth_successful": "Re-authentication succeeded."
+    }
+  },
+  "services": {
+    "send_text": {
+      "name": "Send text",
+      "description": "Display a scrolling text on a Times Gate.",
+      "fields": {
+        "device_id": {"name": "Device", "description": "Divoom DeviceId or HA config entry id."},
+        "text": {"name": "Text", "description": "The text to display."},
+        "text_id": {"name": "Text ID", "description": "Slot 1..19; reusing the same ID overwrites."},
+        "color": {"name": "Color", "description": "Hex color like #FFAA00."},
+        "speed": {"name": "Speed", "description": "Scroll speed (larger = slower)."},
+        "lcd_id": {"name": "LCD ID", "description": "0..4 — Times Gate has 5 displays."}
+      }
     }
   }
 }

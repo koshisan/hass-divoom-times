@@ -17,7 +17,7 @@ class DivoomError(Exception):
 
 
 class DivoomAuthError(DivoomError):
-    """Rejected credentials — cloud login, cloud token, or LocalToken."""
+    """Rejected credentials — cloud login or LocalToken."""
 
 
 class DivoomCommandError(DivoomError):
@@ -44,7 +44,7 @@ def _password_md5(password: str) -> str:
 
 
 class DivoomCloudClient:
-    """Cloud helper for login, device enumeration, and App/SetIp registration."""
+    """Login + device enumeration against appin.divoom-gz.com."""
 
     def __init__(
         self,
@@ -112,34 +112,6 @@ class DivoomCloudClient:
             )
         return out
 
-    async def set_app_ip(
-        self, device_id: int, broker_ip: str, netmask: str = "255.255.255.0"
-    ) -> None:
-        """Tell the Divoom cloud where the device should connect for MQTT.
-
-        The next time the device polls the cloud (seconds), it will (re)connect
-        its MQTT client to `mqtt://<broker_ip>:1883`.
-        """
-        if self._user_id is None or self._token is None:
-            raise DivoomAuthError("not signed in")
-        data = await self._post(
-            "App/SetIp",
-            {
-                "UserId": self._user_id,
-                "Token": self._token,
-                "DeviceId": device_id,
-                "AppIP": broker_ip,
-                "NetMask": netmask,
-            },
-        )
-        rc = data.get("ReturnCode")
-        if rc == 11:
-            raise DivoomAuthError("cloud token no longer valid")
-        if rc != 0:
-            raise DivoomError(
-                f"App/SetIp failed: {rc} {data.get('ReturnMessage', '')}"
-            )
-
     async def _post(self, command: str, body: dict[str, Any]) -> dict[str, Any]:
         url = f"{CLOUD_BASE}/{command}"
         payload = {"Command": command, **body}
@@ -156,7 +128,7 @@ class DivoomCloudClient:
 
 
 class HttpTransport:
-    """Per-device HTTP client for Times Frame (and Times Gate as fallback)."""
+    """Per-device HTTP client."""
 
     def __init__(
         self,

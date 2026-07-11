@@ -15,31 +15,28 @@ CONF_DEVICE_TYPE = "device_type"
 CONF_HOST = "host"
 CONF_MAC = "mac"
 CONF_LOCAL_TOKEN = "local_token"
-CONF_TRANSPORT = "transport"
-CONF_BROKER_IP = "broker_ip"
 
-TRANSPORT_MQTT = "mqtt"
-TRANSPORT_HTTP = "http"
+DEFAULT_SCAN_INTERVAL = 15
 
-# Poll interval used only by the HTTP transport (MQTT is push-based)
-DEFAULT_SCAN_INTERVAL = 30
-
-# Device commands
+# Verified device commands (Times Gate + Times Frame).
 CMD_SET_BRIGHTNESS = "Channel/SetBrightness"
 CMD_ON_OFF_SCREEN = "Channel/OnOffScreen"
-CMD_GET_ON_OFF_SCREEN = "Channel/GetOnOffScreen"
-CMD_GET_INDEX = "Channel/GetIndex"
 CMD_SET_INDEX = "Channel/SetIndex"
 CMD_GET_ALL_CONF = "Channel/GetAllConf"
-CMD_HEARTBEAT = "Device/Hearbeat"  # sic — Divoom's typo, verified on the wire
-CMD_DISCONNECT_MQTT = "Device/DisconnectMqtt"
-CMD_CONNECT_APP = "Device/ConnectApp"
+CMD_SEND_HTTP_TEXT = "Draw/SendHttpText"
+CMD_TIMEZONE = "Sys/TimeZone"
+CMD_LOG_AND_LAT = "Sys/LogAndLat"
+CMD_GET_DEVICE_TIME = "Device/GetDeviceTime"
 
-# Hybrid intervals for MQTT devices (Times Gate).
-MQTT_ONOFF_POLL_INTERVAL = 30       # seconds — Channel/GetOnOffScreen via MQTT
-MQTT_HTTP_POLL_INTERVAL = 60        # seconds — Channel/GetAllConf via HTTP for brightness
+# Channel indices per Divoom docs.
+CHANNEL_LABELS: dict[int, str] = {
+    0: "Faces",
+    1: "Cloud",
+    2: "Visualizer",
+    3: "Custom",
+}
+CHANNEL_LABEL_TO_INDEX: dict[str, int] = {v: k for k, v in CHANNEL_LABELS.items()}
 
-# Divoom "DeviceType" == Hardware code from Device/GetListV2.
 HW_TIMES_GATE_V1 = 400
 HW_TIMES_GATE_V2 = 402
 HW_TIMES_FRAME = 510
@@ -49,9 +46,6 @@ HARDWARE_NAMES: dict[int, str] = {
     HW_TIMES_GATE_V2: "Times Gate",
     HW_TIMES_FRAME: "Times Frame",
 }
-
-# Times Gate speaks MQTT; Times Frame is HTTP-only.
-MQTT_CAPABLE: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
 
 
 @dataclass(slots=True, frozen=True)
@@ -67,9 +61,11 @@ HTTP_PROFILES: dict[int, HttpProfile] = {
     HW_TIMES_FRAME:   HttpProfile(port=9000, path="/divoom_api", method="GET"),
 }
 
-# MQTT topics
-MQTT_TOPIC_APP = "DivoomApp"
-MQTT_TOPIC_DEVICE = "DivoomDevice"
-MQTT_TOPIC_LWT = "DivoomAppLwt"
+# Which hardware supports which write commands. Empty means we don't
+# expose the platform for that device. Verified against real hardware
+# 2026-07-10: Times Gate accepts all of these; Times Frame accepts
+# brightness / on-off but ignores channel/text.
+SUPPORTS_CHANNEL_SELECT: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
+SUPPORTS_SEND_TEXT: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
 
-DEFAULT_BROKER_IP = ""  # user must supply in the flow
+SERVICE_SEND_TEXT = "send_text"

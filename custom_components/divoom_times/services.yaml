@@ -1,0 +1,101 @@
+send_text:
+  name: Send text
+  description: Display a scrolling text on a Times Gate display.
+  fields:
+    device_id:
+      name: Device
+      description: The Divoom DeviceId (from Device/GetListV2) or the HA config entry id.
+      required: true
+      example: "300247715"
+      selector:
+        text:
+    text:
+      name: Text
+      description: The text to display. Up to ~64 chars scrolls smoothly.
+      required: true
+      example: "Hello from HA"
+      selector:
+        text:
+    text_id:
+      name: Text ID
+      description: A slot number 1..19. Reusing the same ID overwrites the previous text.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 19
+          mode: box
+    color:
+      name: Color
+      description: Hex color like #FFAA00.
+      default: "#FFFFFF"
+      selector:
+        text:
+    speed:
+      name: Speed
+      description: Scroll speed. Larger = slower.
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 200
+          mode: slider
+    lcd_id:
+      name: LCD ID
+      description: Times Gate has 5 sub-displays (0..4).
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 4
+          mode: box
+    x:
+      name: X
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 64
+          mode: box
+    y:
+      name: Y
+      default: 24
+      selector:
+        number:
+          min: 0
+          max: 64
+          mode: box
+    font:
+      name: Font
+      default: 4
+      selector:
+        number:
+          min: 0
+          max: 8
+          mode: box
+    width:
+      name: Text width
+      default: 56
+      selector:
+        number:
+          min: 8
+          max: 64
+          mode: box
+    align:
+      name: Alignment
+      description: 0 left, 1 center, 2 right.
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 2
+          mode: box
+    dir:
+      name: Scroll direction
+      description: 0 left-to-right, 1 right-to-left.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 1
+          mode: box

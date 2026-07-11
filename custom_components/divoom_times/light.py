@@ -58,10 +58,6 @@ class DivoomLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
         )
 
     @property
-    def available(self) -> bool:
-        return self.coordinator.online or not self.coordinator.is_mqtt
-
-    @property
     def is_on(self) -> bool | None:
         data = self.coordinator.data or {}
         v = data.get("LightSwitch")
@@ -88,8 +84,6 @@ class DivoomLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
         except DivoomError as err:
             _LOGGER.warning("turn_on failed: %s", err)
             raise
-        if not self.coordinator.is_mqtt:
-            await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         try:
@@ -97,5 +91,3 @@ class DivoomLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
         except DivoomError as err:
             _LOGGER.warning("turn_off failed: %s", err)
             raise
-        if not self.coordinator.is_mqtt:
-            await self.coordinator.async_request_refresh()
