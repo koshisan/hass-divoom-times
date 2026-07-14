@@ -19,6 +19,8 @@ from .api import (
 from .const import (
     CMD_GET_ALL_CONF,
     CMD_GET_ON_OFF_SCREEN,
+    CMD_ON_OFF_SCREEN,
+    CMD_SET_RGB_INFO,
     CONF_DEVICE_ID,
     CONF_DEVICE_TYPE,
     CONF_HOST,
@@ -78,6 +80,17 @@ class DivoomCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             resp = await self.transport.send(command, extra)
         except DivoomAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
+        # Divoom firmware quirk: Channel/SetRGBInfo silently turns the
+        # screen (LightSwitch) ON regardless of the payload's OnOff. If
+        # the user had the screen off, restore it right after the RGB
+        # command lands.
+        if command == CMD_SET_RGB_INFO:
+            desired = (self.data or {}).get("LightSwitch")
+            if isinstance(desired, int) and desired == 0:
+                try:
+                    await self.transport.send(CMD_ON_OFF_SCREEN, {"OnOff": 0})
+                except (DivoomAuthError, DivoomConnectionError, DivoomCommandError):
+                    pass
         # Some devices echo the just-set value back — capture it before
         # the next poll so the UI doesn't stall on a stale reading.
         self._merge_state_fields(resp)

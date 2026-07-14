@@ -98,10 +98,7 @@ class DivoomScreenLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
     def is_on(self) -> bool | None:
         data = self.coordinator.data or {}
         v = data.get("LightSwitch")
-        if isinstance(v, int):
-            return bool(v)
-        b = data.get("Brightness")
-        return None if b is None else b > 0
+        return bool(v) if isinstance(v, int) else None
 
     @property
     def brightness(self) -> int | None:
@@ -162,24 +159,26 @@ class DivoomGateZoneLight(_RgbBase):
         self._attr_device_info = _device_info(entry)
 
     @property
-    def is_on(self) -> bool:
-        return bool(
-            (self.coordinator.data or {}).get(_zone_key(self._slug, "on"), True)
-        )
+    def is_on(self) -> bool | None:
+        # Zone RGB state is never read back — surface as unknown until
+        # the user has actually touched this zone. Prevents fake "on"
+        # toggles right after HA restart.
+        v = (self.coordinator.data or {}).get(_zone_key(self._slug, "on"))
+        return bool(v) if isinstance(v, bool) else None
 
     @property
     def brightness(self) -> int | None:
-        pct = (self.coordinator.data or {}).get(
-            _zone_key(self._slug, "brightness"), 80
-        )
+        pct = (self.coordinator.data or {}).get(_zone_key(self._slug, "brightness"))
+        if not isinstance(pct, int):
+            return None
         return max(0, min(255, round(int(pct) * 255 / 100)))
 
     @property
-    def rgb_color(self) -> tuple[int, int, int]:
+    def rgb_color(self) -> tuple[int, int, int] | None:
         rgb = (self.coordinator.data or {}).get(_zone_key(self._slug, "color"))
         if isinstance(rgb, (list, tuple)) and len(rgb) == 3:
             return tuple(int(c) for c in rgb)  # type: ignore[return-value]
-        return (255, 255, 255)
+        return None
 
     def _resolve(self, kwargs: dict[str, Any]) -> tuple[int, tuple[int, int, int]]:
         current = self.coordinator.data or {}
