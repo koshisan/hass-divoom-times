@@ -24,6 +24,8 @@ CMD_ON_OFF_SCREEN = "Channel/OnOffScreen"
 CMD_GET_ON_OFF_SCREEN = "Channel/GetOnOffScreen"
 CMD_SET_INDEX = "Channel/SetIndex"
 CMD_GET_ALL_CONF = "Channel/GetAllConf"
+CMD_SET_RGB_INFO = "Channel/SetRGBInfo"
+CMD_GET_RGB_INFO = "Channel/GetRGBInfo"
 CMD_SEND_HTTP_TEXT = "Draw/SendHttpText"
 CMD_TIMEZONE = "Sys/TimeZone"
 CMD_LOG_AND_LAT = "Sys/LogAndLat"
@@ -68,6 +70,7 @@ HTTP_PROFILES: dict[int, HttpProfile] = {
 # brightness / on-off but ignores channel/text.
 SUPPORTS_CHANNEL_SELECT: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
 SUPPORTS_SEND_TEXT: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
+SUPPORTS_RGB: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
 
 # Hardware families whose GetAllConf actually returns brightness/state.
 # Times Frame answers GetAllConf with an empty ack — for it we have to
