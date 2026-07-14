@@ -170,10 +170,12 @@ class _RgbBase(CoordinatorEntity[DivoomCoordinator], LightEntity):
 
 
 class DivoomGateRgbLight(_RgbBase):
-    """Times Gate ambient RGB — 5 LEDs, driven by Channel/SetRGBInfo.
+    """Times Gate ambient RGB — 5 back LEDs, driven by Channel/SetRGBInfo.
 
-    Sending `LightList` with the same colour for all 5 LEDs plus
-    `ColorCycle:0` overrides any running effect and holds a static tint.
+    LightList with 5 hex strings crashes the device (network unreachable
+    for ~20s, verified 2026-07-14). Instead we send 5 sequential calls
+    with SelectLightIndex 0..4, each with the same target colour and
+    ColorCycle:0 to override any running animation.
     """
 
     def __init__(self, coordinator: DivoomCoordinator, entry: ConfigEntry) -> None:
@@ -181,20 +183,27 @@ class DivoomGateRgbLight(_RgbBase):
         self._attr_unique_id = f"{DOMAIN}_{entry.data[CONF_DEVICE_ID]}_rgb"
         self._attr_device_info = _device_info(entry)
 
+    async def _apply(
+        self, on: int, pct: int, color_hex: str, key_on_off: int
+    ) -> None:
+        for idx in range(GATE_LED_COUNT):
+            await self.coordinator.async_send(
+                CMD_SET_RGB_INFO,
+                {
+                    "Brightness": pct,
+                    "Color": color_hex,
+                    "ColorCycle": 0,
+                    "OnOff": on,
+                    "KeyOnOff": key_on_off,
+                    "LightList": [],
+                    "SelectLightIndex": idx,
+                },
+            )
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         pct, rgb = self._resolve_target(kwargs)
-        color_hex = _hex(rgb)
-        payload = {
-            "Brightness": pct,
-            "Color": color_hex,
-            "ColorCycle": 0,
-            "OnOff": 1,
-            "KeyOnOff": 1,
-            "LightList": [color_hex] * GATE_LED_COUNT,
-            "SelectLightIndex": 0,
-        }
         try:
-            await self.coordinator.async_send(CMD_SET_RGB_INFO, payload)
+            await self._apply(on=1, pct=pct, color_hex=_hex(rgb), key_on_off=1)
         except DivoomError as err:
             _LOGGER.warning("gate rgb turn_on failed: %s", err)
             raise
@@ -203,17 +212,8 @@ class DivoomGateRgbLight(_RgbBase):
     async def async_turn_off(self, **kwargs: Any) -> None:
         current = self.coordinator.data or {}
         pct = int(current.get(_RGB_BRIGHTNESS, 80))
-        payload = {
-            "Brightness": pct,
-            "Color": "#000000",
-            "ColorCycle": 0,
-            "OnOff": 0,
-            "KeyOnOff": 0,
-            "LightList": ["#000000"] * GATE_LED_COUNT,
-            "SelectLightIndex": 0,
-        }
         try:
-            await self.coordinator.async_send(CMD_SET_RGB_INFO, payload)
+            await self._apply(on=0, pct=pct, color_hex="#000000", key_on_off=0)
         except DivoomError as err:
             _LOGGER.warning("gate rgb turn_off failed: %s", err)
             raise
