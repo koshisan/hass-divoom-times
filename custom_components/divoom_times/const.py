@@ -78,9 +78,24 @@ SUPPORTS_SEND_TEXT: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_
 SUPPORTS_RGB_INFO: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
 SUPPORTS_AMBIENT_LIGHT: frozenset[int] = frozenset({HW_TIMES_FRAME})
 
-# Times Gate has 5 LEDs on the back. Sending LightList with 5 identical
-# colours crashes the device — we send 5 sequential SelectLightIndex calls.
-GATE_LED_COUNT = 5
+# Gate LightIndex enum, per the usausa/divoom-tool reverse engineering.
+GATE_LIGHT_INDEX_ALL = 0
+GATE_LIGHT_INDEX_EDGE = 1        # Surround-Licht
+GATE_LIGHT_INDEX_BACKLIGHT = 2   # 5 back LEDs
+
+GATE_LIGHT_ZONES: dict[int, tuple[str, str]] = {
+    GATE_LIGHT_INDEX_ALL:       ("all",       "All lights"),
+    GATE_LIGHT_INDEX_EDGE:      ("surround",  "Surround"),
+    GATE_LIGHT_INDEX_BACKLIGHT: ("backlight", "Backlight"),
+}
+
+# Static effect ID inside a LightList entry. Confirmed on Times Gate 2026-07-15:
+# `LightList: [{SelectEffect: 5}, {SelectEffect: 5}, {SelectEffect: 5}]`
+# with SelectLightIndex=<zone> + ColorCycle=0 gives a solid colour on the
+# targeted zone. LightList with 5 entries hard-times-out the device
+# (verified crash) — three entries stay stable.
+GATE_EFFECT_STATIC = 5
+GATE_LIGHTLIST_STATIC = [{"SelectEffect": GATE_EFFECT_STATIC}] * 3
 
 # Times Frame "Lichteffekt" grid — 8 modes ordered as they appear in the
 # Divoom app. Only index 7 (Static) has been user-confirmed; the rest are
