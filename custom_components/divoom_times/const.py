@@ -79,8 +79,24 @@ SUPPORTS_RGB_INFO: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V
 SUPPORTS_AMBIENT_LIGHT: frozenset[int] = frozenset({HW_TIMES_FRAME})
 
 # Times Gate has 5 LEDs on the back. Sending LightList with 5 identical
-# colours + ColorCycle:0 forces a static solid across all of them.
+# colours crashes the device — we send 5 sequential SelectLightIndex calls.
 GATE_LED_COUNT = 5
+
+# Times Frame "Lichteffekt" grid — 8 modes ordered as they appear in the
+# Divoom app. Only index 7 (Static) has been user-confirmed; the rest are
+# labelled from icon shapes and can be corrected on the fly by renaming
+# the select option entries.
+FRAME_EFFECT_LABELS: dict[int, str] = {
+    0: "Audio Bars",
+    1: "Meteor",
+    2: "Pixel Rain",
+    3: "Sparkle",
+    4: "Wind",
+    5: "Chat",
+    6: "Pulse",
+    7: "Static",
+}
+FRAME_EFFECT_LABEL_TO_INDEX: dict[str, int] = {v: k for k, v in FRAME_EFFECT_LABELS.items()}
 
 # Hardware families whose GetAllConf actually returns brightness/state.
 # Times Frame answers GetAllConf with an empty ack — for it we have to

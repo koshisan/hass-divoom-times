@@ -38,6 +38,10 @@ _LOGGER = logging.getLogger(__name__)
 _RGB_ON = "_rgb_on"
 _RGB_BRIGHTNESS = "_rgb_brightness"
 _RGB_COLOR = "_rgb_color"
+# Frame-side effect/eq state — owned by select/switch entities but read
+# here so light.turn_on doesn't wipe the last chosen mode.
+_FRAME_EFFECT = "_frame_effect"
+_FRAME_EQ = "_frame_eq_on"
 
 
 async def async_setup_entry(
@@ -235,12 +239,15 @@ class DivoomFrameRgbLight(_RgbBase):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         pct, rgb = self._resolve_target(kwargs)
+        current = self.coordinator.data or {}
+        effect = int(current.get(_FRAME_EFFECT, 7))  # default to Static
+        eq = int(current.get(_FRAME_EQ, 0))
         payload = {
             "Brightness": pct,
             "Color": _hex(rgb),
             "ColorCycle": 0,
-            "EqOnOff": 0,
-            "SelectEffect": 0,
+            "EqOnOff": eq,
+            "SelectEffect": effect,
         }
         try:
             await self.coordinator.async_send(CMD_SET_AMBIENT_LIGHT, payload)
@@ -252,12 +259,14 @@ class DivoomFrameRgbLight(_RgbBase):
     async def async_turn_off(self, **kwargs: Any) -> None:
         current = self.coordinator.data or {}
         pct = int(current.get(_RGB_BRIGHTNESS, 80))
+        effect = int(current.get(_FRAME_EFFECT, 7))
+        eq = int(current.get(_FRAME_EQ, 0))
         payload = {
             "Brightness": 0,
             "Color": "#000000",
             "ColorCycle": 0,
-            "EqOnOff": 0,
-            "SelectEffect": 0,
+            "EqOnOff": eq,
+            "SelectEffect": effect,
         }
         try:
             await self.coordinator.async_send(CMD_SET_AMBIENT_LIGHT, payload)
