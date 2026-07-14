@@ -26,6 +26,8 @@ CMD_SET_INDEX = "Channel/SetIndex"
 CMD_GET_ALL_CONF = "Channel/GetAllConf"
 CMD_SET_RGB_INFO = "Channel/SetRGBInfo"
 CMD_GET_RGB_INFO = "Channel/GetRGBInfo"
+CMD_SET_AMBIENT_LIGHT = "Channel/SetAmbientLight"
+CMD_GET_AMBIENT_LIGHT = "Channel/GetAmbientLight"
 CMD_SEND_HTTP_TEXT = "Draw/SendHttpText"
 CMD_TIMEZONE = "Sys/TimeZone"
 CMD_LOG_AND_LAT = "Sys/LogAndLat"
@@ -70,7 +72,15 @@ HTTP_PROFILES: dict[int, HttpProfile] = {
 # brightness / on-off but ignores channel/text.
 SUPPORTS_CHANNEL_SELECT: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
 SUPPORTS_SEND_TEXT: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
-SUPPORTS_RGB: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
+# Times Gate exposes an ambient RGB via Channel/SetRGBInfo (5 LEDs on the
+# back). Times Frame exposes its side RGB via Channel/SetAmbientLight
+# with a different param shape (EqOnOff, SelectEffect).
+SUPPORTS_RGB_INFO: frozenset[int] = frozenset({HW_TIMES_GATE_V1, HW_TIMES_GATE_V2})
+SUPPORTS_AMBIENT_LIGHT: frozenset[int] = frozenset({HW_TIMES_FRAME})
+
+# Times Gate has 5 LEDs on the back. Sending LightList with 5 identical
+# colours + ColorCycle:0 forces a static solid across all of them.
+GATE_LED_COUNT = 5
 
 # Hardware families whose GetAllConf actually returns brightness/state.
 # Times Frame answers GetAllConf with an empty ack — for it we have to

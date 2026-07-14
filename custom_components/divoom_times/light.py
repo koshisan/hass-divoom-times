@@ -3,7 +3,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.light import ATTR_BRIGHTNESS, ATTR_RGB_COLOR, ColorMode, LightEntity
+from homeassistant.components.light import (
+    ATTR_BRIGHTNESS,
+    ATTR_RGB_COLOR,
+    ColorMode,
+    LightEntity,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -13,6 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .api import DivoomError
 from .const import (
     CMD_ON_OFF_SCREEN,
+    CMD_SET_AMBIENT_LIGHT,
     CMD_SET_BRIGHTNESS,
     CMD_SET_RGB_INFO,
     CONF_DEVICE_ID,
@@ -20,15 +26,15 @@ from .const import (
     CONF_DEVICE_TYPE,
     CONF_MAC,
     DOMAIN,
+    GATE_LED_COUNT,
     HARDWARE_NAMES,
-    SUPPORTS_RGB,
+    SUPPORTS_AMBIENT_LIGHT,
+    SUPPORTS_RGB_INFO,
 )
 from .coordinator import DivoomCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# Internal state keys for the RGB layer. Prefixed with _rgb so they can
-# coexist with the pixel-display state coming back from GetAllConf.
 _RGB_ON = "_rgb_on"
 _RGB_BRIGHTNESS = "_rgb_brightness"
 _RGB_COLOR = "_rgb_color"
@@ -40,9 +46,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: DivoomCoordinator = hass.data[DOMAIN][entry.entry_id]
+    device_type = entry.data.get(CONF_DEVICE_TYPE)
     entities: list[LightEntity] = [DivoomScreenLight(coordinator, entry)]
-    if entry.data.get(CONF_DEVICE_TYPE) in SUPPORTS_RGB:
-        entities.append(DivoomRgbLight(coordinator, entry))
+    if device_type in SUPPORTS_RGB_INFO:
+        entities.append(DivoomGateRgbLight(coordinator, entry))
+    elif device_type in SUPPORTS_AMBIENT_LIGHT:
+        entities.append(DivoomFrameRgbLight(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -60,9 +69,11 @@ def _device_info(entry: ConfigEntry) -> DeviceInfo:
     )
 
 
-class DivoomScreenLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
-    """The pixel display: on/off + brightness. No colour — content is the face."""
+def _hex(rgb: tuple[int, int, int]) -> str:
+    return "#{:02X}{:02X}{:02X}".format(*rgb)
 
+
+class DivoomScreenLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "screen"
     _attr_name = "Screen"
@@ -110,82 +121,147 @@ class DivoomScreenLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
             raise
 
 
-class DivoomRgbLight(CoordinatorEntity[DivoomCoordinator], LightEntity):
-    """The ambient RGB layer around the pixel display."""
-
+class _RgbBase(CoordinatorEntity[DivoomCoordinator], LightEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "rgb"
     _attr_name = "RGB"
     _attr_supported_color_modes = {ColorMode.RGB}
     _attr_color_mode = ColorMode.RGB
 
-    def __init__(self, coordinator: DivoomCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{entry.data[CONF_DEVICE_ID]}_rgb"
-        self._attr_device_info = _device_info(entry)
-
     @property
     def is_on(self) -> bool | None:
-        # Optimistic — GetRGBInfo returns nothing. Assume on until told otherwise.
         return bool((self.coordinator.data or {}).get(_RGB_ON, True))
 
     @property
     def brightness(self) -> int | None:
-        pct = (self.coordinator.data or {}).get(_RGB_BRIGHTNESS)
-        if not isinstance(pct, int):
-            return 255
-        return max(0, min(255, round(pct * 255 / 100)))
+        pct = (self.coordinator.data or {}).get(_RGB_BRIGHTNESS, 80)
+        return max(0, min(255, round(int(pct) * 255 / 100)))
 
     @property
     def rgb_color(self) -> tuple[int, int, int] | None:
         rgb = (self.coordinator.data or {}).get(_RGB_COLOR)
         if isinstance(rgb, (list, tuple)) and len(rgb) == 3:
             return tuple(int(c) for c in rgb)  # type: ignore[return-value]
-        return None
+        return (255, 255, 255)
 
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        current = dict(self.coordinator.data or {})
-        pct = current.get(_RGB_BRIGHTNESS, 80)
-        rgb = current.get(_RGB_COLOR, (255, 255, 255))
+    def _resolve_target(
+        self, kwargs: dict[str, Any]
+    ) -> tuple[int, tuple[int, int, int]]:
+        current = self.coordinator.data or {}
+        pct = int(current.get(_RGB_BRIGHTNESS, 80))
+        rgb: tuple[int, int, int] = tuple(  # type: ignore[assignment]
+            current.get(_RGB_COLOR) or (255, 255, 255)
+        )
         if ATTR_BRIGHTNESS in kwargs:
             pct = max(1, round(int(kwargs[ATTR_BRIGHTNESS]) * 100 / 255))
         if ATTR_RGB_COLOR in kwargs:
-            rgb = tuple(int(c) for c in kwargs[ATTR_RGB_COLOR])
-        color_hex = "#{:02X}{:02X}{:02X}".format(*rgb)
+            rgb = tuple(int(c) for c in kwargs[ATTR_RGB_COLOR])  # type: ignore[assignment]
+        return pct, rgb
+
+    def _persist(
+        self, on: bool, pct: int, rgb: tuple[int, int, int] | None
+    ) -> None:
+        current = dict(self.coordinator.data or {})
+        current[_RGB_ON] = on
+        current[_RGB_BRIGHTNESS] = pct
+        if rgb is not None:
+            current[_RGB_COLOR] = tuple(rgb)
+        self.coordinator.async_set_updated_data(current)
+
+
+class DivoomGateRgbLight(_RgbBase):
+    """Times Gate ambient RGB — 5 LEDs, driven by Channel/SetRGBInfo.
+
+    Sending `LightList` with the same colour for all 5 LEDs plus
+    `ColorCycle:0` overrides any running effect and holds a static tint.
+    """
+
+    def __init__(self, coordinator: DivoomCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_{entry.data[CONF_DEVICE_ID]}_rgb"
+        self._attr_device_info = _device_info(entry)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        pct, rgb = self._resolve_target(kwargs)
+        color_hex = _hex(rgb)
         payload = {
-            "Brightness": int(pct),
+            "Brightness": pct,
             "Color": color_hex,
             "ColorCycle": 0,
             "OnOff": 1,
             "KeyOnOff": 1,
-            "LightList": [],
+            "LightList": [color_hex] * GATE_LED_COUNT,
             "SelectLightIndex": 0,
         }
         try:
             await self.coordinator.async_send(CMD_SET_RGB_INFO, payload)
         except DivoomError as err:
-            _LOGGER.warning("rgb turn_on failed: %s", err)
+            _LOGGER.warning("gate rgb turn_on failed: %s", err)
             raise
-        current[_RGB_ON] = True
-        current[_RGB_BRIGHTNESS] = int(pct)
-        current[_RGB_COLOR] = tuple(rgb)
-        self.coordinator.async_set_updated_data(current)
+        self._persist(True, pct, rgb)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        current = dict(self.coordinator.data or {})
+        current = self.coordinator.data or {}
+        pct = int(current.get(_RGB_BRIGHTNESS, 80))
         payload = {
-            "Brightness": int(current.get(_RGB_BRIGHTNESS, 80)),
+            "Brightness": pct,
             "Color": "#000000",
             "ColorCycle": 0,
             "OnOff": 0,
             "KeyOnOff": 0,
-            "LightList": [],
+            "LightList": ["#000000"] * GATE_LED_COUNT,
             "SelectLightIndex": 0,
         }
         try:
             await self.coordinator.async_send(CMD_SET_RGB_INFO, payload)
         except DivoomError as err:
-            _LOGGER.warning("rgb turn_off failed: %s", err)
+            _LOGGER.warning("gate rgb turn_off failed: %s", err)
             raise
-        current[_RGB_ON] = False
-        self.coordinator.async_set_updated_data(current)
+        self._persist(False, pct, None)
+
+
+class DivoomFrameRgbLight(_RgbBase):
+    """Times Frame sidelight — driven by Channel/SetAmbientLight.
+
+    Static mode = `EqOnOff:0, ColorCycle:0, SelectEffect:0`. The Frame
+    also supports EQ / cycling modes; those live in a separate select
+    entity so this light stays a plain colour picker.
+    """
+
+    def __init__(self, coordinator: DivoomCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_{entry.data[CONF_DEVICE_ID]}_rgb"
+        self._attr_device_info = _device_info(entry)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        pct, rgb = self._resolve_target(kwargs)
+        payload = {
+            "Brightness": pct,
+            "Color": _hex(rgb),
+            "ColorCycle": 0,
+            "EqOnOff": 0,
+            "SelectEffect": 0,
+        }
+        try:
+            await self.coordinator.async_send(CMD_SET_AMBIENT_LIGHT, payload)
+        except DivoomError as err:
+            _LOGGER.warning("frame rgb turn_on failed: %s", err)
+            raise
+        self._persist(True, pct, rgb)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        current = self.coordinator.data or {}
+        pct = int(current.get(_RGB_BRIGHTNESS, 80))
+        payload = {
+            "Brightness": 0,
+            "Color": "#000000",
+            "ColorCycle": 0,
+            "EqOnOff": 0,
+            "SelectEffect": 0,
+        }
+        try:
+            await self.coordinator.async_send(CMD_SET_AMBIENT_LIGHT, payload)
+        except DivoomError as err:
+            _LOGGER.warning("frame rgb turn_off failed: %s", err)
+            raise
+        self._persist(False, pct, None)
