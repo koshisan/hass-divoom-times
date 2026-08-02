@@ -36,10 +36,11 @@ from .const import (
     HTTP_PROFILES,
 )
 
-# After this many consecutive connection failures, ask the Divoom cloud
-# whether the device's LAN IP has changed. Threshold + cooldown keeps us
-# from hammering appin.divoom-gz.com when a device is genuinely offline.
-IP_REFRESH_MIN_FAILURES = 3
+# Try a cloud lookup after this many consecutive connection failures.
+# 1 = act on the very first failure — critical for async_config_entry_first_refresh,
+# where each setup retry creates a fresh coordinator with the counter back at
+# zero. The 120s cooldown is what actually prevents hammering the cloud.
+IP_REFRESH_MIN_FAILURES = 1
 IP_REFRESH_COOLDOWN = 120.0
 
 _LOGGER = logging.getLogger(__name__)
